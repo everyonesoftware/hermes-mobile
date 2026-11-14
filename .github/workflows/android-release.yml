@@ -45,10 +45,21 @@ jobs:
       - name: Install Android platform and build tools
         run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
 
-      - name: Test, lint, and build APK
+      - name: Test, lint, and build signed APK
         working-directory: apps/android
+        env:
+          HERMES_SIGNING_KEYSTORE_BASE64: ${{ secrets.HERMES_SIGNING_KEYSTORE_BASE64 }}
+          HERMES_SIGNING_STORE_PASSWORD: ${{ secrets.HERMES_SIGNING_STORE_PASSWORD }}
+          HERMES_SIGNING_KEY_PASSWORD: ${{ secrets.HERMES_SIGNING_STORE_PASSWORD }}
+          HERMES_SIGNING_STORE_FILE: ${{ runner.temp }}/hermes-pocket-release.p12
         run: |
-          bash gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug \
+          set -euo pipefail
+          test -n "$HERMES_SIGNING_KEYSTORE_BASE64"
+          test -n "$HERMES_SIGNING_STORE_PASSWORD"
+          trap 'rm -f "$HERMES_SIGNING_STORE_FILE"' EXIT
+          printf '%s' "$HERMES_SIGNING_KEYSTORE_BASE64" | base64 --decode > "$HERMES_SIGNING_STORE_FILE"
+          chmod 600 "$HERMES_SIGNING_STORE_FILE"
+          bash gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease \
             -PreleaseVersionCode="${{ steps.version.outputs.code }}" \
             -PreleaseVersionName="${{ steps.version.outputs.name }}" \
             --console=plain --max-workers=2
@@ -58,18 +69,21 @@ jobs:
           VERSION: ${{ steps.version.outputs.name }}
           VERSION_CODE: ${{ steps.version.outputs.code }}
         run: |
+          set -euo pipefail
+          apk=apps/android/app/build/outputs/apk/release/app-release.apk
           python3 - <<'PY'
           import json
           import os
           from pathlib import Path
-          metadata = json.loads(Path('apps/android/app/build/outputs/apk/debug/output-metadata.json').read_text())
+          metadata = json.loads(Path('apps/android/app/build/outputs/apk/release/output-metadata.json').read_text())
           element, = metadata['elements']
           assert element['versionName'] == os.environ['VERSION'], element
           assert element['versionCode'] == int(os.environ['VERSION_CODE']), element
           PY
-          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose apps/android/app/build/outputs/apk/debug/app-debug.apk
-          cp apps/android/app/build/outputs/apk/debug/app-debug.apk \
-            "hermes-pocket-v${VERSION}-debug.apk"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$apk"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$apk" | \
+            grep -Fx 'Signer #1 certificate SHA-256 digest: 2fbe9c818343e22b7ffdd34e2fd4236c6ea1a488a67aeb99e6a249621479c0f2'
+          cp "$apk" "hermes-pocket-v${VERSION}.apk"
 
       - name: Publish development release
         env:
@@ -81,8 +95,8 @@ jobs:
             echo "Release $TAG already exists; refusing to overwrite its APK." >&2
             exit 1
           fi
-          gh release create "$TAG" "hermes-pocket-v${VERSION}-debug.apk" \
+          gh release create "$TAG" "hermes-pocket-v${VERSION}.apk" \
             --target "$GITHUB_SHA" \
-            --title "Hermes Pocket $TAG (debug)" \
-            --notes "Development/debug APK built from commit $GITHUB_SHA. Not a production-signed release; the remote gateway still requires a separately provisioned HTTPS endpoint and token." \
+            --title "Hermes Pocket $TAG (prerelease)" \
+            --notes "Development prerelease signed with the stable Hermes Pocket key (certificate SHA-256: 2F:BE:9C:81:83:43:E2:2B:7F:FD:D3:4E:2F:D4:23:6C:6E:A1:A4:88:A6:7A:EB:99:E6:A2:49:62:14:79:C0:F2). This can update subsequent APKs signed with the same key, but cannot update older CI debug builds; uninstall those first. The remote gateway still requires a separately provisioned HTTPS endpoint and token." \
             --prerelease

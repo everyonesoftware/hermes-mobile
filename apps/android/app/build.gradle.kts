@@ -16,6 +16,24 @@ android {
         versionName = providers.gradleProperty("releaseVersionName").getOrElse("0.1.0")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
+    val signingStoreFile = System.getenv("HERMES_SIGNING_STORE_FILE")
+    val signingStorePassword = System.getenv("HERMES_SIGNING_STORE_PASSWORD")
+    val signingKeyPassword = System.getenv("HERMES_SIGNING_KEY_PASSWORD")
+    if (signingStoreFile != null && signingStorePassword != null && signingKeyPassword != null) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(signingStoreFile)
+                storePassword = signingStorePassword
+                keyAlias = "hermes-pocket"
+                keyPassword = signingKeyPassword
+            }
+        }
+        buildTypes {
+            getByName("release") {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
+    }
     buildFeatures { compose = true }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

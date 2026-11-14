@@ -21,6 +21,12 @@ python3 scripts/verify-android.py --serial emulator-5582
 
 The runner refuses physical devices and validates the JUnit summary; a zero exit code from `am instrument` alone is not sufficient.
 
+## Automated debug releases
+
+`.github/workflows/android-release.yml` runs on pushes to `main` and can be manually dispatched from `main`. It checks out full history, uses `scripts/release-version.sh` to count commits reachable from `HEAD`, then sets the APK `versionName` to `0.1.N` and `versionCode` to `N`. It runs JVM unit tests, Android lint, and a debug APK build; verifies the APK version metadata and debug signature; and publishes `hermes-pocket-v0.1.N-debug.apk` under the `v0.1.N` GitHub prerelease. This is a development build signed with the CI runner's temporary debug key, **not** a stable release or a production update path. No emulator or real-server integration test runs in CI.
+
+The release step refuses to overwrite an existing release tag on rerun. Local builds without release Gradle properties keep the development defaults `0.1.0` / version code `1`. To inspect a release-equivalent local build, pass `-PreleaseVersionName=0.1.N -PreleaseVersionCode=N` (using the values printed by `bash scripts/release-version.sh`) to Gradle. Full history is required for the count.
+
 ## Safety boundaries
 
 - No remote connection happens on first launch. The demo must be explicitly entered and visibly labeled.

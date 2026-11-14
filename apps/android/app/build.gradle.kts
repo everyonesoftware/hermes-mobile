@@ -12,8 +12,8 @@ android {
         applicationId = "com.everyonesoftware.hermespocket"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = providers.gradleProperty("releaseVersionCode").map(String::toInt).getOrElse(1)
+        versionName = providers.gradleProperty("releaseVersionName").getOrElse("0.1.0")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true }

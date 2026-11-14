@@ -1,0 +1,88 @@
+name: Android debug release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-debug-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Derive version from commit count
+        id: version
+        shell: bash
+        run: |
+          version_data=$(bash scripts/release-version.sh)
+          read -r version code <<< "$version_data"
+          echo "name=$version" >> "$GITHUB_OUTPUT"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install Android platform and build tools
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+
+      - name: Test, lint, and build APK
+        working-directory: apps/android
+        run: |
+          bash gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug \
+            -PreleaseVersionCode="${{ steps.version.outputs.code }}" \
+            -PreleaseVersionName="${{ steps.version.outputs.name }}" \
+            --console=plain --max-workers=2
+
+      - name: Verify APK metadata and signature
+        env:
+          VERSION: ${{ steps.version.outputs.name }}
+          VERSION_CODE: ${{ steps.version.outputs.code }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          metadata = json.loads(Path('apps/android/app/build/outputs/apk/debug/output-metadata.json').read_text())
+          element, = metadata['elements']
+          assert element['versionName'] == os.environ['VERSION'], element
+          assert element['versionCode'] == int(os.environ['VERSION_CODE']), element
+          PY
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose apps/android/app/build/outputs/apk/debug/app-debug.apk
+          cp apps/android/app/build/outputs/apk/debug/app-debug.apk \
+            "hermes-pocket-v${VERSION}-debug.apk"
+
+      - name: Publish development release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.name }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; refusing to overwrite its APK." >&2
+            exit 1
+          fi
+          gh release create "$TAG" "hermes-pocket-v${VERSION}-debug.apk" \
+            --target "$GITHUB_SHA" \
+            --title "Hermes Pocket $TAG (debug)" \
+            --notes "Development/debug APK built from commit $GITHUB_SHA. Not a production-signed release; the remote gateway still requires a separately provisioned HTTPS endpoint and token." \
+            --prerelease
